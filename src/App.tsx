@@ -1,7 +1,17 @@
-import React, { useRef, useState, useEffect } from "react";
+import { useRef, useState, useEffect } from "react";
 import { Mic, MicOff, Radio, Home, Settings, Info, Github, Twitter, Mail, Heart, Loader2, FileText, User } from "lucide-react";
+import { Suspense } from 'react';
+import { Canvas } from '@react-three/fiber';
+import { OrbitControls } from '@react-three/drei';
+
+import Developer from './components/Developer.jsx';
+import CanvasLoader from './components/Loading.jsx';
 
 export default function DeafTranslator() {
+  const queueRef = useRef([]);
+  const playingRef = useRef(false);
+
+  const [animationName, setAnimationName] = useState('IDLE');
   const [isRecording, setIsRecording] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0);
@@ -16,6 +26,7 @@ export default function DeafTranslator() {
   useEffect(() => {
     setMounted(true);
   }, []);
+
 
   const analyzeAudio = (stream) => {
     const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -39,6 +50,17 @@ export default function DeafTranslator() {
 
     detectLevel();
   };
+
+  function toTokens(gloss) {
+  if (!gloss) return [];
+  if (Array.isArray(gloss)) return gloss.filter(Boolean);
+  // string case
+  return String(gloss)
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
 
   const start = async () => {
     try {
@@ -75,15 +97,26 @@ export default function DeafTranslator() {
       };
 
       ws.onmessage = (event) => {
-        // Handle backend responses
-        const data = JSON.parse(event.data);
-        if (data.stage === 'text') {
-          setTranscribedText(data.text);
-          setProcessingStage('text');
-        } else if (data.stage === 'avatar') {
-          setProcessingStage('avatar');
-        }
-      };
+  const data = JSON.parse(event.data);
+
+  if (data.type === "result") {
+    setTranscribedText(data.transcript);
+
+    const tokens = toTokens(data.gloss);
+    console.log("GLOSS TOKENS:", tokens);
+
+    setAnimationName(data.gloss[0])
+    
+
+    setProcessingStage("text");
+    setTimeout(() => setProcessingStage("avatar"), 200); // no need 5s
+
+    // start playing if not already
+    if (!playingRef.current) {
+      playQueue(); // defined below
+    }
+  }
+};
 
       ws.onerror = (e) => console.error("WS error:", e);
       ws.onclose = () => console.log("WS closed");
@@ -93,27 +126,27 @@ export default function DeafTranslator() {
   };
 
   const stop = () => {
-    const ws = wsRef.current;
-    const mr = mediaRecorderRef.current;
-    if (mr && mr.state !== "inactive") mr.stop();
-    if (ws && ws.readyState === WebSocket.OPEN) ws.send("STOP");
-    if (ws) ws.close();
-    setIsRecording(false);
-    setAudioLevel(0);
-    
-    // Start processing
-    setProcessingStage('processing');
-    
-    // Simulate processing stages (replace with actual backend responses)
-    setTimeout(() => {
-      setTranscribedText("Hello, how are you today? I hope you're having a wonderful day!");
-      setProcessingStage('text');
-    }, 2000);
-    
-    setTimeout(() => {
-      setProcessingStage('avatar');
-    }, 4000);
-  };
+  const ws = wsRef.current;
+  const mr = mediaRecorderRef.current;
+
+  // UI state
+  setIsRecording(false);
+  setAudioLevel(0);
+  setProcessingStage("processing");
+
+  // ✅ stop recorder first (it will trigger final chunk)
+  if (mr && mr.state !== "inactive") {
+    // ask browser to flush last chunk immediately (helps a lot)
+    try { mr.requestData(); } catch {}
+    mr.stop();
+  }
+
+  // ✅ DO NOT close ws immediately.
+  // Send a control message that your backend understands.
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send("end"); // your backend checks for "end"
+  }
+};
 
   const reset = () => {
     setProcessingStage(null);
@@ -412,19 +445,28 @@ export default function DeafTranslator() {
 
                 {/* 3D Avatar Container */}
                 <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 border border-purple-500/30 rounded-2xl p-8 mb-6 relative overflow-hidden">
-                  <div className="absolute inset-0 bg-gradient-to-br from-purple-500/10 to-blue-500/10"></div>
-                  
-                  {/* Placeholder for 3D Avatar */}
-                  <div className="relative h-64 flex items-center justify-center">
-                    <div className="text-center">
-                      <div className="w-32 h-32 mx-auto mb-4 rounded-full bg-gradient-to-br from-purple-500 to-blue-600 flex items-center justify-center shadow-2xl shadow-purple-500/50 animate-pulse">
-                        <User className="w-16 h-16 text-white" />
-                      </div>
-                      <p className="text-slate-400 text-sm">3D Avatar performing sign language</p>
-                      <p className="text-slate-500 text-xs mt-2">(3D model will be rendered here)</p>
-                    </div>
-                  </div>
-                </div>
+  <div className="absolute inset-0 bg-gradient-to-br from-purple-500/10 to-blue-500/10"></div>
+
+  <div className="relative h-[350px] w-full">
+    <div className="work-canvas h-full w-full">
+      <Canvas camera={{ position: [0, 1, 2.2], fov: 35 }}>
+        <ambientLight intensity={1.5} />
+        <spotLight position={[5, 10, 5]} angle={0.2} penumbra={1} />
+        <directionalLight position={[5, 5, 5]} intensity={1} />
+
+        <OrbitControls enableZoom={false} maxPolarAngle={Math.PI / 2} />
+
+        <Suspense fallback={<CanvasLoader />}>
+          <Developer
+            position={[0, -2.55, 0]}
+            scale={1.8}
+            animationName={animationName}
+          />
+        </Suspense>
+      </Canvas>
+    </div>
+  </div>
+</div>
 
                 {/* Transcribed text below */}
                 <div className="bg-slate-800/30 border border-slate-700/30 rounded-xl p-4 mb-6">
