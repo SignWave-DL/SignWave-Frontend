@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect } from "react";
-import { Mic, MicOff, Radio, Home, Settings, Info, Github, Twitter, Mail, Heart, Loader2, FileText, User } from "lucide-react";
+import { Mic, MicOff, Radio, Home, Settings, Info, Github, Twitter, Mail, Heart, Loader2, FileText, User, X } from "lucide-react";
 import { Suspense } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
@@ -7,28 +7,35 @@ import { OrbitControls } from '@react-three/drei';
 import Developer from './components/Developer.jsx';
 import CanvasLoader from './components/Loading.jsx';
 
+declare global {
+  interface Window {
+    webkitAudioContext: typeof AudioContext;
+  }
+}
+
 export default function DeafTranslator() {
-  const queueRef = useRef([]);
+  const queueRef = useRef<string[]>([]);
   const playingRef = useRef(false);
 
   const [animationName, setAnimationName] = useState('IDLE');
   const [isRecording, setIsRecording] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0);
-  const [processingStage, setProcessingStage] = useState(null); // 'processing', 'text', 'avatar'
+  const [processingStage, setProcessingStage] = useState<'processing' | 'text' | 'avatar' | null>(null);
   const [transcribedText, setTranscribedText] = useState("");
-  const wsRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
-  const audioContextRef = useRef(null);
-  const analyserRef = useRef(null);
-  const animationRef = useRef(null);
+  const [useWhisper, setUseWhisper] = useState(true);
+  const wsRef = useRef<WebSocket | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animationRef = useRef<number | null>(null);
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
 
-  const analyzeAudio = (stream) => {
+  const analyzeAudio = (stream: MediaStream) => {
     const audioContext = new (window.AudioContext || window.webkitAudioContext)();
     const analyser = audioContext.createAnalyser();
     const microphone = audioContext.createMediaStreamSource(stream);
@@ -51,7 +58,7 @@ export default function DeafTranslator() {
     detectLevel();
   };
 
-  function toTokens(gloss) {
+  function toTokens(gloss: any) {
   if (!gloss) return [];
   if (Array.isArray(gloss)) return gloss.filter(Boolean);
   // string case
@@ -61,28 +68,61 @@ export default function DeafTranslator() {
     .filter(Boolean);
 }
 
+  const playQueue = () => {
+    if (playingRef.current || queueRef.current.length === 0) return;
+    
+    playingRef.current = true;
+    const token = queueRef.current.shift();
+    
+    if (token) setAnimationName(token);
+    
+    setTimeout(() => {
+      playingRef.current = false;
+      playQueue();
+    }, 2000);
+  };
+
 
   const start = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      console.log("🎤 Starting recording...");
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: { 
+          echoCancellation: true, 
+          noiseSuppression: true,
+          autoGainControl: false 
+        } 
+      });
+      console.log("✅ Microphone access granted, tracks:", stream.getAudioTracks().length);
       analyzeAudio(stream);
       
-      const ws = new WebSocket("ws://localhost:8000/ws/audio");
+      const ws = new WebSocket(`ws://localhost:8000/ws/audio?model=${useWhisper ? 'whisper' : 'ctc'}`);
       ws.binaryType = "arraybuffer";
       wsRef.current = ws;
 
       ws.onopen = () => {
+        console.log("✅ WebSocket connected!");
         const mr = new MediaRecorder(stream, { mimeType: "audio/webm" });
         mediaRecorderRef.current = mr;
 
+        let chunkCount = 0;
         mr.ondataavailable = async (event) => {
           if (event.data && event.data.size > 0 && ws.readyState === WebSocket.OPEN) {
+            chunkCount++;
             const buf = await event.data.arrayBuffer();
+            console.log(`📤 Sending audio chunk ${chunkCount}: ${event.data.size} bytes`);
             ws.send(buf);
+          } else {
+            console.warn(`⚠️ Skipped chunk: size=${event.data?.size}, wsReady=${ws.readyState === WebSocket.OPEN}`);
           }
         };
 
+        mr.onerror = (event) => {
+          console.error("❌ MediaRecorder error:", event.error);
+        };
+
         mr.onstop = () => {
+          console.log("✅ MediaRecorder stopped, closing audio tracks");
           stream.getTracks().forEach((t) => t.stop());
           if (audioContextRef.current) {
             audioContextRef.current.close();
@@ -92,7 +132,8 @@ export default function DeafTranslator() {
           }
         };
 
-        mr.start(250);
+        mr.start(100);
+        console.log("🔴 Recording started with 100ms chunks");
         setIsRecording(true);
       };
 
@@ -100,32 +141,33 @@ export default function DeafTranslator() {
   const data = JSON.parse(event.data);
 
   if (data.type === "result") {
+    console.log("✅ Received result from backend:", data);
     setTranscribedText(data.transcript);
 
     const tokens = toTokens(data.gloss);
     console.log("GLOSS TOKENS:", tokens);
 
-    setAnimationName(data.gloss[0])
+    queueRef.current.push(...tokens);
     
-
     setProcessingStage("text");
-    setTimeout(() => setProcessingStage("avatar"), 200); // no need 5s
+    setTimeout(() => setProcessingStage("avatar"), 200);
 
-    // start playing if not already
     if (!playingRef.current) {
-      playQueue(); // defined below
+      playQueue();
     }
   }
 };
 
-      ws.onerror = (e) => console.error("WS error:", e);
-      ws.onclose = () => console.log("WS closed");
+      ws.onerror = (e) => console.error("❌ WS error:", e);
+      ws.onclose = () => console.log("❌ WS closed");
     } catch (err) {
-      console.error("Error accessing microphone:", err);
+      console.error("❌ Error accessing microphone:", err);
+      alert("Microphone access denied. Please check browser permissions.");
     }
   };
 
   const stop = () => {
+  console.log("⏹️ Stopping recording...");
   const ws = wsRef.current;
   const mr = mediaRecorderRef.current;
 
@@ -136,17 +178,54 @@ export default function DeafTranslator() {
 
   // ✅ stop recorder first (it will trigger final chunk)
   if (mr && mr.state !== "inactive") {
+    console.log(`MediaRecorder state: ${mr.state}`);
     // ask browser to flush last chunk immediately (helps a lot)
     try { mr.requestData(); } catch {}
     mr.stop();
+    console.log("✅ MediaRecorder stopped");
   }
 
   // ✅ DO NOT close ws immediately.
   // Send a control message that your backend understands.
   if (ws && ws.readyState === WebSocket.OPEN) {
+    console.log("📤 Sending 'end' message to backend");
     ws.send("end"); // your backend checks for "end"
+  } else {
+    console.warn(`⚠️ WebSocket not ready. State: ${ws?.readyState}`);
   }
 };
+
+  const cancelRecording = () => {
+    console.log("❌ Cancelling recording...");
+    const ws = wsRef.current;
+    const mr = mediaRecorderRef.current;
+
+    // UI state
+    setIsRecording(false);
+    setAudioLevel(0);
+    setProcessingStage(null);
+    setTranscribedText("");
+    setAnimationName('IDLE');
+    queueRef.current = [];
+
+    // Stop recorder without triggering callbacks if possible
+    if (mr && mr.state !== "inactive") {
+      try { mr.stop(); } catch {}
+    }
+
+    // Close WebSocket immediately so backend doesn't process
+    if (ws) {
+      ws.close(); // Force close
+    }
+    
+    // Stop audio tracks
+    if (audioContextRef.current) {
+      try { audioContextRef.current.close(); } catch {}
+    }
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
+    }
+  };
 
   const reset = () => {
     setProcessingStage(null);
@@ -254,6 +333,31 @@ export default function DeafTranslator() {
               <p className="text-slate-400 text-lg">Voice to Sign Language Interpreter</p>
             </div>
 
+            {/* Model Selector Switch */}
+            {!processingStage && (
+              <div className={`flex items-center justify-center gap-4 mb-8 transition-all duration-700 delay-250 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4'}`}>
+                <span className={`text-sm font-medium transition-colors duration-300 ${!useWhisper ? 'text-purple-400' : 'text-slate-500'}`}>
+                  CTC Model
+                </span>
+                <button
+                  onClick={() => setUseWhisper(!useWhisper)}
+                  disabled={isRecording}
+                  className={`relative w-16 h-8 rounded-full transition-all duration-300 ${
+                    isRecording ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                  } ${useWhisper ? 'bg-gradient-to-r from-purple-500 to-blue-600' : 'bg-slate-700'}`}
+                >
+                  <div
+                    className={`absolute top-1 left-1 w-6 h-6 bg-white rounded-full shadow-lg transition-transform duration-300 ${
+                      useWhisper ? 'translate-x-8' : 'translate-x-0'
+                    }`}
+                  ></div>
+                </button>
+                <span className={`text-sm font-medium transition-colors duration-300 ${useWhisper ? 'text-purple-400' : 'text-slate-500'}`}>
+                  Whisper
+                </span>
+              </div>
+            )}
+
             {/* Content based on stage */}
             {!processingStage && (
               <>
@@ -351,8 +455,28 @@ export default function DeafTranslator() {
                   </div>
                   
                   {isRecording && (
-                    <div className="mt-3 text-sm text-slate-500">
-                      Audio Level: <span className="text-red-400 font-mono">{Math.round(audioLevel)}%</span>
+                    <div className="mt-6 h-12 flex items-end justify-center gap-1.5 px-8">
+                      {[...Array(20)].map((_, i) => {
+                        // i=0 is Left (low volume threshold) -> starts filling from left
+                        const threshold = i * 5;
+                        const isActive = audioLevel > threshold;
+                        
+                        return (
+                          <div
+                            key={i}
+                            className={`w-1.5 rounded-full transition-all duration-75 ${
+                              isActive 
+                                ? 'bg-gradient-to-t from-red-500 to-pink-500 shadow-[0_0_8px_rgba(239,68,68,0.8)]' 
+                                : 'bg-slate-800/30'
+                            }`}
+                            style={{
+                              height: isActive 
+                                ? `${30 + Math.random() * 70}%` 
+                                : '10px'
+                            }}
+                          ></div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -360,16 +484,11 @@ export default function DeafTranslator() {
                 {/* Controls */}
                 <div className={`flex gap-4 transition-all duration-700 delay-500 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
                   <button
-                    onClick={start}
-                    disabled={isRecording}
-                    className={`flex-1 py-5 px-8 rounded-2xl font-bold text-white transition-all duration-300 flex items-center justify-center gap-3 text-lg ${
-                      isRecording
-                        ? 'bg-slate-700/50 cursor-not-allowed opacity-40'
-                        : 'bg-gradient-to-r from-purple-500 via-blue-500 to-indigo-600 hover:from-purple-600 hover:via-blue-600 hover:to-indigo-700 shadow-xl shadow-purple-500/40 hover:shadow-purple-500/60 hover:scale-105 active:scale-100'
-                    }`}
+                    onClick={isRecording ? cancelRecording : start}
+                    className="flex-1 py-5 px-8 rounded-2xl font-bold text-white transition-all duration-300 flex items-center justify-center gap-3 text-lg bg-gradient-to-r from-purple-500 via-blue-500 to-indigo-600 hover:from-purple-600 hover:via-blue-600 hover:to-indigo-700 shadow-xl shadow-purple-500/40 hover:shadow-purple-500/60 hover:scale-105 active:scale-100"
                   >
-                    <Mic className="w-6 h-6" />
-                    Start Recording
+                    {isRecording ? <X className="w-6 h-6" /> : <Mic className="w-6 h-6" />}
+                    {isRecording ? "Cancel" : "Start Recording"}
                   </button>
                   
                   <button
