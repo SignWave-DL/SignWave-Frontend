@@ -277,7 +277,7 @@ export default function DeafTranslator() {
                 </div>
                 <div>
                   <h1 className="text-xl font-bold bg-gradient-to-r from-purple-400 to-blue-400 bg-clip-text text-transparent">
-                    Deaf Translator
+                    Sign Wave
                   </h1>
                   <p className="text-xs text-slate-500">Voice to Sign Language</p>
                 </div>
@@ -327,8 +327,8 @@ export default function DeafTranslator() {
           <div className="relative bg-gradient-to-br from-slate-800/80 to-slate-900/80 backdrop-blur-2xl rounded-3xl p-12 shadow-2xl border border-purple-500/20 min-w-[580px]">
             {/* Header */}
             <div className={`text-center mb-10 transition-all duration-700 delay-200 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-4'}`}>
-              <h1 className="text-5xl font-bold bg-gradient-to-r from-purple-400 via-blue-400 to-indigo-400 bg-clip-text text-transparent mb-3">
-                Deaf Translator
+              <h1 className="text-5xl font-bold bg-gradient-to-r from-purple-400 via-blue-400 to-indigo-400 bg-clip-text text-transparent mb-3 pb-2">
+                Sign Wave
               </h1>
               <p className="text-slate-400 text-lg">Voice to Sign Language Interpreter</p>
             </div>
@@ -630,7 +630,7 @@ export default function DeafTranslator() {
                     <Radio className="w-6 h-6 text-white" strokeWidth={2.5} />
                   </div>
                   <h3 className="text-xl font-bold bg-gradient-to-r from-purple-400 to-blue-400 bg-clip-text text-transparent">
-                    Deaf Translator
+                    Sign Wave
                   </h3>
                 </div>
                 <p className="text-slate-400 text-sm leading-relaxed">
@@ -672,7 +672,7 @@ export default function DeafTranslator() {
             {/* Bottom Bar */}
             <div className="pt-6 border-t border-slate-700/50 flex flex-col md:flex-row items-center justify-between gap-4">
               <p className="text-slate-500 text-sm">
-                © 2026 Deaf Translator. All rights reserved.
+                © 2026 Sign Wave. All rights reserved.
               </p>
               <div className="flex items-center gap-2 text-slate-500 text-sm">
                 Made with <Heart className="w-4 h-4 text-red-500 fill-red-500" /> for accessibility
